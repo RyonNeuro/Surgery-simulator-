@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>동맥류 클립결찰 시뮬레이터 v0</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #1a0f0f; color: #f3e9e4;
+    font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { padding: 10px 14px; font-size: 15px; }
+  header b { color: #ffb48a; }
+  canvas { flex: 1; width: 100%; touch-action: none; display: block; }
+  .bar { display: flex; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); align-items: center; }
+  .bar label { font-size: 13px; white-space: nowrap; }
+  .bar input[type=range] { flex: 1; }
+  button { background: #ffb48a; color: #2a1410; border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 700; font-size: 15px; }
+  #msg { padding: 0 14px 6px; min-height: 22px; font-size: 14px; }
+</style>
+</head>
+<body>
+<header><b>v0 프로토타입</b> · 클립을 끌어서 동맥류 경부(neck)에 걸고, 각도를 맞춘 뒤 <b>결찰</b></header>
+<canvas id="c"></canvas>
+<div id="msg"></div>
+<div class="bar">
+  <label>각도</label><input id="ang" type="range" min="-90" max="90" value="0">
+  <button id="close">결찰</button>
+  <button id="reset" style="background:#5a3a33;color:#f3e9e4">리셋</button>
+</div>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const msg = document.getElementById('msg'), ang = document.getElementById('ang');
+let W, H, S, clip, closed = false;
+
+// 단순화한 2D 모델: 모혈관(아래→위) + 분지부의 낭상 동맥류
+function geom() {
+  const cx = W / 2, cy = H * 0.55;
+  return {
+    parent: [[cx, H + 20], [cx, cy]],                     // 모혈관
+    branchL: [[cx, cy], [cx - 160 * S, cy - 120 * S]],     // 좌측 분지
+    branchR: [[cx, cy], [cx + 160 * S, cy - 120 * S]],     // 우측 분지
+    vesselW: 26 * S,
+    neck: [[cx - 22 * S, cy - 16 * S], [cx + 22 * S, cy - 16 * S]], // 경부 양끝
+    dome: { x: cx, y: cy - 70 * S, r: 52 * S },
+  };
+}
+
+function resize() {
+  const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+  cv.width = r.width * d; cv.height = r.height * d;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  W = r.width; H = r.height; S = Math.min(W, H) / 400;
+  if (!clip) reset(); draw();
+}
+function reset() {
+  clip = { x: W * 0.8, y: H * 0.85, len: 70 * S };
+  ang.value = 0; closed = false; msg.textContent = ''; draw();
+}
+
+function line(p, w, col) {
+  ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(...p[0]); ctx.lineTo(...p[1]); ctx.stroke();
+}
+function clipEnds() {
+  const a = (+ang.value) * Math.PI / 180, h = clip.len / 2;
+  return [[clip.x - Math.cos(a) * h, clip.y - Math.sin(a) * h],
+          [clip.x + Math.cos(a) * h, clip.y + Math.sin(a) * h]];
+}
+
+function draw() {
+  const g = geom();
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#3a1f1a'; ctx.fillRect(0, 0, W, H);          // 뇌 표면 배경
+  for (const v of [g.parent, g.branchL, g.branchR]) { line(v, g.vesselW + 4, '#5c0f12'); line(v, g.vesselW, '#c4282e'); }
+  // 동맥류 돔
+  ctx.fillStyle = closed && evaluate().ok ? '#7a3a3a' : '#d6464a';
+  ctx.beginPath(); ctx.arc(g.dome.x, g.dome.y, g.dome.r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillRect(g.neck[0][0], g.neck[0][1] - 30 * S, g.neck[1][0] - g.neck[0][0], 30 * S);
+  // 경부 가이드(점선)
+  ctx.setLineDash([4, 4]); line(g.neck, 1.5, '#ffe0a0'); ctx.setLineDash([]);
+  // 클립
+  const e = clipEnds(), gap = closed ? 0 : 7 * S;
+  const a = (+ang.value) * Math.PI / 180, nx = -Math.sin(a) * gap, ny = Math.cos(a) * gap;
+  line([[e[0][0] + nx, e[0][1] + ny], [e[1][0] + nx, e[1][1] + ny]], 5 * S, '#cfd6dc');
+  line([[e[0][0] - nx, e[0][1] - ny], [e[1][0] - nx, e[1][1] - ny]], 5 * S, '#cfd6dc');
+  ctx.fillStyle = '#9aa4ac'; ctx.beginPath(); ctx.arc(e[1][0], e[1][1], 8 * S, 0, Math.PI * 2); ctx.fill();
+}
+
+// 평가: 클립 날이 경부 전체를 덮는지 / 모혈관·분지를 물지 않는지
+function distSeg(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}
+function evaluate() {
+  const g = geom(), e = clipEnds();
+  const covered = g.neck.every(p => distSeg(p, e[0], e[1]) < 6 * S);
+  let pinched = false;
+  for (let i = 0; i <= 20; i++) {
+    const t = i / 20, p = [e[0][0] + (e[1][0] - e[0][0]) * t, e[0][1] + (e[1][1] - e[0][1]) * t];
+    for (const v of [g.parent, g.branchL, g.branchR]) {
+      // 경부 바로 아래(분지부 중심)는 클립 경로가 지나도 되는 구간에서 제외
+      if (p[1] < g.neck[0][1] - 2 * S) continue;
+      if (distSeg(p, v[0], v[1]) < g.vesselW / 2 && p[1] > g.neck[0][1] + 4 * S) pinched = true;
+    }
+  }
+  return { ok: covered && !pinched, covered, pinched };
+}
+
+// 터치/마우스 드래그
+let drag = null;
+cv.addEventListener('pointerdown', ev => {
+  if (closed) return;
+  const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  if (Math.hypot(x - clip.x, y - clip.y) < clip.len) { drag = { dx: clip.x - x, dy: clip.y - y }; cv.setPointerCapture(ev.pointerId); }
+});
+cv.addEventListener('pointermove', ev => {
+  if (!drag) return;
+  const r = cv.getBoundingClientRect();
+  clip.x = ev.clientX - r.left + drag.dx; clip.y = ev.clientY - r.top + drag.dy; draw();
+});
+cv.addEventListener('pointerup', () => drag = null);
+ang.addEventListener('input', () => { if (!closed) draw(); });
+
+document.getElementById('close').onclick = () => {
+  closed = true; const r = evaluate(); draw();
+  msg.textContent = r.ok ? '✅ 완전 결찰 — 경부를 모두 덮고 모혈관 보존'
+    : r.pinched ? '⚠️ 모혈관/분지 협착 — 클립 위치를 다시 잡으세요'
+    : '⚠️ 경부 잔존(neck remnant) — 클립이 경부 전체를 덮지 못함';
+};
+document.getElementById('reset').onclick = reset;
+addEventListener('resize', resize);
+resize();
+</script>
+</body>
+</html>
