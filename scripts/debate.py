@@ -68,7 +68,11 @@ def ask_claude(system, messages):
             "content-type": "application/json",
         },
     )
-    return "".join(b.get("text", "") for b in res["content"] if b.get("type") == "text")
+    text = "".join(b.get("text", "") for b in res.get("content", []) if b.get("type") == "text")
+    if not text.strip():
+        kinds = [b.get("type") for b in res.get("content", [])]
+        raise RuntimeError(f"Claude 응답이 비어 있음 (stop_reason={res.get('stop_reason')}, blocks={kinds})")
+    return text
 
 
 def ask_gpt(system, messages):
@@ -98,8 +102,9 @@ def issue_context():
     comments = gh(f"/issues/{ISSUE}/comments?per_page=50") or []
     lines = [f"# 이슈: {issue['title']}", issue.get("body") or ""]
     for c in comments:
-        if "<!-- ai-debate -->" in (c.get("body") or ""):
-            continue  # 이전 AI 발언은 제외(사용자 의견만)
+        body = (c.get("body") or "").strip()
+        if "<!-- ai-debate -->" in body or body.startswith("/토론"):
+            continue  # 이전 AI 발언·실행 명령은 제외(사용자 의견만)
         lines.append(f"\n[사용자 댓글] {c['body']}")
     return "\n".join(lines)
 
