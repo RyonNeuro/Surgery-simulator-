@@ -61,7 +61,7 @@ def ask_claude(system, messages):
         raise RuntimeError("ANTHROPIC_API_KEY 시크릿이 없습니다.")
     res = http_json(
         "https://api.anthropic.com/v1/messages",
-        {"model": CLAUDE_MODEL, "max_tokens": 4000, "system": system, "messages": messages},
+        {"model": CLAUDE_MODEL, "max_tokens": 16000, "system": system, "messages": messages},
         {
             "x-api-key": ANTHROPIC_KEY,
             "anthropic-version": "2023-06-01",
